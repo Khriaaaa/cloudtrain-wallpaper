@@ -9,8 +9,8 @@ InstallDir "$LOCALAPPDATA\CloudTrainWallpaper"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
-!define MUI_ICON "app.ico"
-!define MUI_UNICON "app.ico"
+!define MUI_ICON "..\src\app.ico"
+!define MUI_UNICON "..\src\app.ico"
 !define MUI_ABORTWARNING
 
 ; 自启动询问页 (自绘勾选框用 MUI_COMPONENTS 页替代 → 用 .onSelChange 处理 Section)
