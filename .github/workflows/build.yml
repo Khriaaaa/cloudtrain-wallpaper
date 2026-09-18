@@ -1,0 +1,48 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Publish self-contained win-x64
+        run: dotnet publish src/CloudTrainWallpaper.csproj -c Release -r win-x64 --self-contained true -o publish/CloudTrainWallpaper
+
+      - name: Stage wallpaper assets into publish dir
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path publish/CloudTrainWallpaper/wallpaper | Out-Null
+          Copy-Item wallpaper/index.html publish/CloudTrainWallpaper/wallpaper/
+          Copy-Item wallpaper/blue_noise.png publish/CloudTrainWallpaper/wallpaper/
+
+      - name: Download NSIS
+        shell: pwsh
+        run: |
+          $url = "https://prdownloads.sourceforge.net/nsis/NSIS%203.10.1.zip"
+          Invoke-WebRequest -Uri $url -OutFile nsis.zip -MaximumRedirection 5
+          Expand-Archive nsis.zip -DestinationPath C:\nsis
+          Get-ChildItem C:\nsis -Recurse -Filter makensis.exe | Select-Object -First 1 FullName
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $mk = (Get-ChildItem C:\nsis -Recurse -Filter makensis.exe | Select-Object -First 1).FullName
+          & $mk /V3 installer/installer.nsi
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudTrainWallpaper-Setup
+          path: installer/CloudTrainWallpaper-Setup.exe
+          if-no-files-found: error

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>云间列车</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #101418; overflow: hidden;
+    font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  #gl { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #sig { position: fixed; right: 18px; bottom: 16px; color: #fff; opacity: .7;
+    font-size: 13px; letter-spacing: .06em; text-align: right; pointer-events: none;
+    text-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  #panel { position: fixed; right: 18px; top: 18px; width: 246px; padding: 14px 16px 12px;
+    background: rgba(18,20,26,.62); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 12px; color: #e8eef5; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+  #panel h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; letter-spacing: .04em; display: flex;
+    align-items: center; justify-content: space-between; }
+  #panel .x { cursor: pointer; opacity: .55; font-weight: 400; }
+  .row { margin-bottom: 7px; }
+  .row label { display: flex; justify-content: space-between; font-size: 12px; opacity: .82; margin-bottom: 2px; }
+  .row input[type=range] { width: 100%; height: 3px; -webkit-appearance: none; appearance: none;
+    background: rgba(255,255,255,.22); border-radius: 2px; outline: none; }
+  .row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px;
+    border-radius: 50%; background: #fff; cursor: pointer; }
+  .btns { display: flex; gap: 8px; margin-top: 10px; }
+  .btns button { flex: 1; padding: 5px 0; font-size: 12px; color: #e8eef5; cursor: pointer;
+    background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.16); border-radius: 7px; }
+  .btns button:hover { background: rgba(255,255,255,.18); }
+  #timeInd { position: fixed; left: 22px; bottom: 18px; color: #fff; opacity: .7;
+    font-size: 13px; letter-spacing: .06em; pointer-events: none;
+    text-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  #toggle { position: fixed; right: 18px; top: 18px; display: none; z-index: 10;
+    padding: 6px 10px; color: #fff; background: rgba(18,20,26,.62); border: 1px solid rgba(255,255,255,.14);
+    border-radius: 8px; cursor: pointer; }
+</style>
+<style>#panel,#toggle{display:none!important}</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="timeInd"></div>
+<div id="sig">BY KYRIA<br>☁️ train beta1</div>
+<div id="toggle">参数</div>
+<div id="panel">
+  <h2>场景参数 <span class="x" id="close">×</span></h2>
+  <div id="rows"></div>
+  <div class="btns">
+    <button id="reset">重置</button>
+    <button id="clock">跟随时钟</button>
+    <button id="pause">暂停</button>
+  </div>
+</div>
+<script>
+const SHADER_VERT = "#version 300 es\nin vec2 pos;\nvoid main(){ gl_Position = vec4(pos, 0., 1.); }";
+const SHADER_SCENE = "#version 300 es\nprecision highp float;\nprecision highp int;\nuniform vec3 iResolution;\nuniform float iTime;\nuniform sampler2D iChannel0;\nuniform sampler2D iChannel1;\nuniform float uZoom, uOffset, uSpeed, uAmplitude, uDetail;\nuniform float uTimeOfDay;\nuniform float uRain;\nuniform float uThunder;\nuniform float uSnowDepth;\nuniform float uWind;\nout vec4 sceneOut;\n\nfloat _nightF;\nfloat _tw;\n\n\n// Author: Tianxiu Zhou\n// Date: 2024-10-10\n// Title: Traveling in the Cloud\n// Adapted from mdb's work: https://www.shadertoy.com/view/Ndc3zl.\n// Vector to raster coversion is practiced in functions `genRaster` and above.\n// Color manipulation is practiced in `vignettCorrection`.\n// Apart from the original author's work, applied varying train speed and\n// brightness.\n// To play with Shader Toy, you should provide a base texture in iChannel 0\n// to sample noise color values.\n// For example, choose Textures -> Blue Noise\n\nfloat noise(vec2 x){\n    vec2 f = fract(x);\n    vec2 u = f*f*f*(f*(f*6.0-15.0)+10.0);\n    vec2 du = 30.0*f*f*(f*(f-2.0)+1.0);\n\n    vec2 p = floor(x);\n\tfloat a = texture(iChannel0, (p+vec2(0.0, 0.0))/1024.0).x;\n\tfloat b = texture(iChannel0, (p+vec2(1.0,0.0))/1024.0).x;\n\tfloat c = texture(iChannel0, (p+vec2(0.0,1.0))/1024.0).x;\n\tfloat d = texture(iChannel0, (p+vec2(1.0,1.0))/1024.0).x;\n\n\treturn a+(b-a)*u.x+(c-a)*u.y+(a-b-c+d)*u.x*u.y;\n}\n\nfloat fbm(vec2 x, int detail){\n    float a = 0.0;\n    float b = 1.0;\n    float t = 0.0;\n    for(int i = 0; i < min(detail, int(uDetail)); i++){\n        float n = noise(x);\n        a += b*n;\n        t += b;\n        b *= 0.7;\n        x *= 2.0;\n    }\n    return a/t;\n}\n\nfloat fbm2(vec2 x, int detail){\n    float a = 0.0;\n    float b = 1.0;\n    float t = 0.0;\n    for(int i = 0; i < min(detail, int(uDetail)); i++){\n        float n = noise(x);\n        a += b*n;\n        t += b;\n        b *= 0.9;\n        x *= 2.0;\n    }\n    return a/t;\n}\n\n// Snow cover: gradual accumulation from uSnowDepth (JS-integrated), patches via noise\nfloat snowCover(vec2 uv) {\n    if (uSnowDepth <= 0.001) return 0.0;\n    float n = fbm(uv * 30.0 + 11.3, 5);\n    // threshold grows: early snow patches in dips, full cover with depth\n    float th = mix(0.85, 0.25, uSnowDepth);\n    return smoothstep(th - 0.08, th + 0.02, n);\n}\nvec3 applySnow(vec3 col, vec2 uv, float strength, float slopeK) {\n    float sc = snowCover(uv) * strength;\n    vec3 snowCol = vec3(0.93, 0.94, 0.97);\n    float lum = dot(col, vec3(0.299, 0.587, 0.114));\n    snowCol = mix(snowCol, min(snowCol * 1.25, vec3(1.0)), uSnowDepth * 0.35);\n    return mix(col, snowCol, clamp(sc * slopeK, 0.0, 1.0));\n}\n\nfloat box(vec2 uv, float x1, float x2, float y1, float y2){\n    return (uv.x > x1 && uv.x < x2 && uv.y > y1 && uv.y < y2)?1.0:0.0;\n}\n\n#define dot2(v) dot(v, v)\n#define dot2(v) dot(v, v)\nfloat _twilight() {\n    float s = cos((uTimeOfDay - 0.5) * 6.28318530);\n    // peak exactly at dawn (tod≈0.25) / dusk (tod≈0.75) where s crosses zero\n    float band = 1.0 - smoothstep(0.02, 0.30, abs(s));\n    return clamp(band, 0.0, 1.0);\n}\n\nfloat nightAmount() {\n    float sunAngle = cos((uTimeOfDay - 0.5) * 6.28318530);\n    return 1.0 - smoothstep(-0.60, 0.50, sunAngle);\n}\n\nvec3 nightShift(vec3 col, float n) {\n    if (n < 0.001) return col;\n    vec3 nightCol = col * vec3(0.07, 0.09, 0.22);\n    nightCol += vec3(0.01, 0.02, 0.08);\n    float lum = dot(col, vec3(0.299, 0.587, 0.114));\n    nightCol += vec3(0.02, 0.04, 0.12) * lum;\n    return mix(col, nightCol, n);\n}\n\nvec3 twShift(vec3 col) {\n    if (_tw < 0.01) return col;\n    vec3 warm = col * vec3(1.15, 0.82, 0.60);\n    return mix(col, warm, clamp(_tw * 0.75, 0.0, 1.0));\n}\n\nfloat stars(vec2 uv, float t) {\n    vec2 g = floor(uv * 100.0);\n    float h = fract(sin(dot(g, vec2(127.1, 311.7))) * 43758.5453);\n    float twinkle = sin(t * 1.5 + h * 6.283) * 0.35 + 0.65;\n    return step(0.985, h) * twinkle;\n}\n\nfloat hash(vec2 p) {\n    p = fract(p * vec2(5.3983, 5.4427));\n    p += dot(p.yx, p.xy + vec2(21.5351, 14.3137));\n    return fract(p.x * p.y * 95.4337);\n}\n\n#define layer(dh, v)  if (uv.y < h + midlevel - (dh) ) return vec4(twShift(nightShift(v, _nightF)), 1.);\n\nvec4 foreground(vec2 uv, float t){\n    float midlevel;\n    float h;\n    float disp;\n    float dist;\n    vec2 uv2;\n\n    uv.y -= 0.2;\n    // clouds foreground //////////////////////////////////////////////////////\n\n    // c14\n    midlevel = -0.1;\n    disp = 1.7;\n    dist = 1.0;\n    uv2 = uv + vec2(t/dist + 40.0, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.12, vec3(0.43, 0.32, 0.31));\n    layer(0.08, vec3(0.55, 0.42, 0.41));\n    layer(0.04, vec3(0.66, 0.42, 0.40));\n    layer(0., vec3(0.77, 0.48, 0.46));\n\n    // c13\n\n    midlevel = 0.05;\n    disp = 1.7;\n    dist = 2.0;\n    uv2 = uv + vec2(t/dist + 38.0, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.1, vec3(0.95, 0.66, 0.48));\n    layer(0.04, vec3(0.98, 0.76, 0.64));\n    layer(0., vec3(0.95, 0.80, 0.77));\n\n    return vec4(nightShift(vec3(0.95, 0.80, 0.77), _nightF), 0.);\n}\n\nvec4 background(vec2 uv, float t){\n    float midlevel;\n    float h;\n    float disp;\n    float dist;\n    vec2 uv2;\n\n    // clouds ///////////////////////////////////////////////////////\n\n    // c12\n    midlevel = 0.3;\n    disp = 0.9;\n    dist = 10.0;\n    uv2 = uv + vec2(t/dist + 32.5, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.14, vec3(0.48, 0.19, 0.20));\n    layer(0.1, vec3(0.68, 0.28, 0.19));\n    layer(0.07, vec3(0.88, 0.38, 0.24));\n    layer(0., vec3(0.95, 0.45, 0.30));\n\n    // c11\n    midlevel = 0.35;\n    disp = 1.0;\n    dist = 15.0;\n    uv2 = uv + vec2(t/dist + 30.0, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.04, vec3(0.98, 0.76, 0.64));\n    layer(0., vec3(0.95, 0.80, 0.77));\n\n    // c10\n    midlevel = 0.35;\n    disp = 3.5;\n    dist = 20.0;\n    uv2 = uv + vec2(t/dist + 27.5, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.12, vec3(0.43, 0.32, 0.31));\n    layer(0.08, vec3(0.55, 0.42, 0.41));\n    layer(0.04, vec3(0.66, 0.42, 0.40));\n    layer(0., vec3(0.77, 0.48, 0.46));\n\n    // c9\n    midlevel = 0.45;\n    disp = 2.0;\n    dist = 25.0;\n    uv2 = uv + vec2(t/dist + 23.0, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.04, vec3(0.98, 0.57, 0.36));\n    layer(0., vec3(1.0, 0.62, 0.44));\n\n    // c8\n    midlevel = 0.5;\n    disp = 2.3;\n    dist = 30.0;\n    uv2 = uv + vec2(t/dist + 20.5, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.12, vec3(0.41, 0.27, 0.27));\n    layer(0.08, vec3(0.53, 0.35, 0.32));\n    layer(0.04, vec3(0.80, 0.24, 0.17));\n    layer(0., vec3(0.99, 0.29, 0.20));\n\n    // c7\n    midlevel = 0.5;\n    disp = 2.5;\n    dist = 35.0;\n    uv2 = uv + vec2(t/dist + 18.0, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.1, vec3(0.88, 0.38, 0.24));\n    layer(0.05, vec3(0.98, 0.42, 0.28));\n    layer(0., vec3(1.0, 0.48, 0.35));\n\n    // c6\n    midlevel = 0.6;\n    disp = 2.0;\n    dist = 40.0;\n    uv2 = uv + vec2(t/dist + 18.0, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.1, vec3(0.95, 0.66, 0.48));\n    layer(0., vec3(1.0, 0.76, 0.60));\n\n    // c5\n    midlevel = 0.75;\n    disp = 3.5;\n    dist = 45.0;\n    uv2 = uv + vec2(t/dist + 15.5, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.2, vec3(1.0, 0.55, 0.33));\n    layer(0.15, vec3(0.98, 0.50, 0.24));\n    layer(0.1, vec3(0.90, 0.55, 0.40));\n    layer(0., vec3(1.0, 0.62, 0.44));\n\n    // c4\n    midlevel = 0.7;\n    disp = 2.7;\n    dist = 50.0;\n    uv2 = uv + vec2(t/dist + 12.0, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.04, vec3(0.73, 0.36, 0.30));\n    layer(0., vec3(0.80, 0.40, 0.34));\n\n    // c3\n    midlevel = 0.8;\n    disp = 2.7;\n    dist = 60.0;\n    uv2 = uv + vec2(t/dist + 9.5, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.1, vec3(0.93, 0.58, 0.35));\n    layer(0., vec3(1.0, 0.76, 0.60));\n\n    // c2\n    midlevel = 0.9;\n    disp = 3.0;\n    dist = 70.0;\n    uv2 = uv + vec2(t/dist + 7.0, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.1, vec3(0.56, 0.25, 0.22));\n    layer(0.05, vec3(0.60, 0.30, 0.27));\n    layer(0., vec3(0.74, 0.35, 0.30));\n\n    // c1\n    midlevel = 1.0;\n    disp = 5.0;\n    dist = 100.0;\n    uv2 = uv + vec2(t/dist + 3.5, 0.0);\n    h = (fbm(uv2, 8) - 0.5)*disp*uAmplitude;\n    layer(0.1, vec3(0.92, 0.85, 0.82));\n    layer(0., vec3(1.0, 0.94, 0.91));\n\n    vec3 skyDay = vec3(0.58, 0.7, 1.0);\n    vec3 skyNight = vec3(0.015, 0.03, 0.10);\n    float _tw = _twilight();                       // 0 .. 1 peaks at dawn & dusk\n    vec3 sky = mix(skyDay, skyNight, _nightF);\n    sky = mix(sky, vec3(0.55, 0.28, 0.30), _tw * 0.55);\n    float s = stars(uv * 3.0 + vec2(t * 0.003, 0.0), t);\n    sky += vec3(s) * _nightF * 0.85;\n    return vec4(sky, 1.);\n}\n\nvec3 genRaster( vec2 uv )\n{\n    float t = sin(1.2 * iTime * uSpeed) + 4. * iTime * uSpeed;\n    vec4 bg = background(uv, t);\n\n    vec4 fg = vec4(0.);\n    int n = 5;\n    if (uv.y < 0.5)\n    for (int i = 0; i < n; i++){\n        fg += foreground(uv, t+4.*float(i)/float(n)/60.) / (float(n));\n    }\n\n    vec3 col = bg.rgb;\n    // train //////////////////////////////////////////////////////////////////\n    float k;\n    float midlevel;\n    float h;\n    float disp;\n    float dist;\n    vec2 uv2;\n    uv.y -= 0.2;\n    // choo choo\n    k = 1.0;\n    uv2 = fract(uv*9.0);\n    float wagon = 1.0;\n    wagon *= 1.0 - step(0.45, uv.x);\n    wagon *= 1.0 - step(0.115, uv.y);\n    wagon *= step(0.103, uv.y);\n    wagon *= step(0.05, 1.0 - abs(uv2.x*2.0 - 1.0));\n\n    float join = 1.0;\n    join *= 1.0 - step(0.45, uv.x);\n    join *= 1.0 - step(0.11, uv.y);\n    join *= step(0.107, uv.y);\n\n\n    float roof = 1.0;\n    roof *= 1.0 - step(0.45, uv.x);\n    roof *= 1.0 - step(0.117, uv.y);\n    roof *= step(0.11, uv.y);\n    roof *= step(0.15, 1.0 - abs(uv2.x*2.0 - 1.0));\n\n    float loco = box(uv, 0.45, 0.5, 0.103, 0.112);\n    float chem1 = box(uv, 0.49, 0.495, 0.103, 0.12);\n    float chem2 = box(uv, 0.488, 0.496, 0.12, 0.123);\n    float locoRoof = box(uv, 0.443, 0.47, 0.11, 0.117);\n\n    float wheel = 1.0 - step(0.00004, dot2(uv - vec2(0.457, 0.106)));\n    wheel += 1.0 - step(0.00002, dot2(uv - vec2(0.487, 0.105)));\n    wheel += 1.0 - step(0.00002, dot2(uv - vec2(0.497, 0.105)));\n\n    if (uv.x < 0.45 && uv.y > 0.025 && uv.y < 0.2){\n        wheel += 1.0 - step(0.002, dot2(uv2 - vec2(0.2, 0.95)));\n        wheel += 1.0 - step(0.002, dot2(uv2 - vec2(0.8, 0.95)));\n    }\n    col = mix(col, nightShift(vec3(0.18, 0.12, 0.15), _nightF), join);\n    col = mix(col, nightShift(vec3(0.48, 0.19, 0.20), _nightF), wagon);\n    col = mix(col, nightShift(vec3(0.18, 0.12, 0.15), _nightF), roof);\n\n    col = mix(col, nightShift(vec3(0.38, 0.19, 0.20), _nightF), loco);\n    col = mix(col, nightShift(vec3(0.38, 0.19, 0.20), _nightF), chem1);\n    col = mix(col, nightShift(vec3(0.18, 0.12, 0.15), _nightF), locoRoof);\n    col = mix(col, nightShift(vec3(0.18, 0.12, 0.15), _nightF), chem2 + wheel);\n    // loco smoke //////\n\n    dist = 5.0;\n    uv2 = uv + vec2(t/dist + 3.5, 0.0);\n    uv2.x -= t/dist*0.2;\n    h = fbm2(uv2, 8) - 0.55;\n\n    if(uv.x < 0.49){\n        float x = -uv.x + 0.49;\n        float y = abs(uv.y + h*0.4 - 0.16*sqrt(x) - 0.12) - 0.8*x*exp(-x*10.0);\n        if(y < 0.0) col = nightShift(vec3(1.0, 0.94, 0.91), _nightF);\n        if(y < - 0.02) col = nightShift(vec3(0.92, 0.85, 0.82), _nightF);\n    }\n\n    //bridge ///////\n    dist = 5.0;\n    uv2 = uv + vec2(t/dist + 32.5, 0.0);\n    uv2.x = fract(uv2.x*3.0);\n    k = 1.0;\n    k *= smoothstep(0.001, 0.003, abs(uv2.y - pow(uv2.x - 0.5, 2.0)*0.15 - 0.12));\n    k *= min(step(0.05, 1.0 - abs(uv2.x*2.0 - 1.0))\n         +   step(0.17, uv2.y), 1.0);\n    k *= min(smoothstep(0.02, 0.05, 1.0 - abs(uv2.x*2.0 - 1.0))\n         +   step(0.177, uv2.y), 1.0);\n\n    k *= min(step(0.1, uv2.y)\n           + smoothstep(-0.09, -0.085, -uv2.y - 0.001/(1.0 - abs(uv2.x*2.0 - 1.0))), 1.0);\n\n    k *= min(smoothstep(0.05, 0.2, 1.0 - abs(fract(uv2.x*16.0)*2.0 - 1.0))\n         +   step(0.12, uv2.y - pow(uv2.x - 0.5, 2.0)*0.15)\n         +   step(-0.1, -uv2.y), 1.0);\n    col = mix(nightShift(vec3(0.29, 0.09, 0.08), _nightF)*smoothstep(-0.08, 0.08, uv.y), col, k);\n\n    col = mix(col, fg.rgb, fg.a * 0.35);\n    // night glow on train — painted last, above smoke & fg clouds, same world coords\n    {\n      vec2 g2uv = uv;                       // same shift the train used\n      float band = step(0.1035, g2uv.y) * (1.0 - step(0.1132, g2uv.y));\n      vec2 gu2 = fract(g2uv * 9.0);\n      float strip = 1.0 - step(0.05, 1.0 - abs(gu2.x*2.0 - 1.0));\n      float wId = floor(g2uv.x * 9.0);\n      float flick = 0.82 + 0.18*sin(iTime*1.9 + wId*5.37);\n      float lit = step(0.45, hash(vec2(wId, 4.0)));\n      float inTrain = 1.0 - step(0.45, g2uv.x);\n      float wl3 = clamp(_nightF * band * strip * lit * flick * inTrain, 0.0, 1.0);\n      vec3 lampCol = mix(vec3(1.05, 0.88, 0.45), vec3(1.0, 0.72, 0.38), hash(vec2(wId, 7.0)));\n      col = mix(col, lampCol, clamp(wl3 * 1.25, 0.0, 1.0));\n      // occasional lower-half blue glass tint on remaining windows\n      float stripD = strip * (1.0 - lit);\n      col = mix(col, vec3(0.55, 0.68, 0.98), clamp(_nightF*band*stripD*(1.0-strip)*0.0, 0.0, 0.0));\n      col = mix(col, vec3(1.05, 0.88, 0.42), clamp(wl3 * 1.35, 0.0, 1.0));\n      float bx = g2uv.x - 0.5;\n      float cone = bx > 0.0 ? exp(-bx*7.5) * exp(-abs(g2uv.y - 0.108)*95.0) : 0.0;\n      col += vec3(1.0, 0.93, 0.70) * cone * _nightF * 0.55;\n      float hd = length((g2uv - vec2(0.495, 0.108)) * vec2(1.0, 12.0));\n      col = mix(col, vec3(1.0, 0.97, 0.85), _nightF * (1.0 - smoothstep(0.0, 0.0035, hd)));\n    }\n\n    // train lights (night) — painted at original coordinates below\n    // snow cover accumulation (gradual via uSnowDepth) on train top surfaces\n    {\n    float snowMask = roof + locoRoof + clamp(join*0.0,0.0,0.0);\n    float sc = snowCover(uv);\n    vec3 snowCol = mix(vec3(0.93,0.94,0.97), min(vec3(0.93,0.94,0.97)*1.25,vec3(1.0)), uSnowDepth*0.35);\n    col = mix(col, nightShift(snowCol,_nightF), clamp(sc * uSnowDepth * 1.6 * snowMask, 0.0, 1.0));\n    }\n    return col;\n}\n\n\n// Birds — adapted from guinetik/genuary2026 day31_finale.glsl (flock geometry)\nfloat birdShape(vec2 p, float dir, float flap) {\n    float size = 0.0125;\n    float wingY = size * (0.45 + flap * 0.35);\n    p.x *= (dir > 0.0 ? 1.0 : -1.0);\n    float d1 = abs(p.y - p.x * wingY / size * 0.05) - 0.0011;\n    float d2 = abs(p.y + p.x * wingY / size * 0.05) - 0.0011;\n    float wing = min(d1, d2);\n    wing = max(wing, p.x);\n    wing = max(wing, -p.x - size * 0.55);\n    return wing;\n}\nvec3 renderBirds(vec2 uv, float t) {\n    for (float fl = 0.0; fl < 3.0; fl++) {\n        float cycleT = 44.0;\n        float actT = 26.0;\n        float ft = mod(t + fl * 27.0, cycleT);\n        if (ft > actT) continue;\n        float seed = fl * 17.31 + 3.0;\n        float dir = mod(fl, 2.0) < 1.0 ? 1.0 : -1.0;\n        float startY = 0.42 + hash(vec2(seed, 1.0)) * 0.30;\n        float targetY = 0.40 + hash(vec2(seed, 2.0)) * 0.32;\n        float prog = ft / actT;\n        float fx = dir > 0.0 ? mix(-0.35, 2.2, prog) : mix(2.2, -0.35, prog);\n        float fy = mix(startY, targetY, prog);\n        float count = 7.0 + floor(hash(vec2(seed, 3.0)) * 6.0);\n        for (float b = 0.0; b < 13.0; b++) {\n            if (b >= count) continue;\n            float bseed = seed + b * 3.17;\n            float ox = (hash(vec2(bseed, 0.0)) - 0.5) * 0.14;\n            float oy = (hash(vec2(bseed, 1.0)) - 0.5) * 0.05;\n            float chev = abs(b - count * 0.5) * 0.016;    // V-formation trailing\n            vec2 bp = vec2(fx - dir * abs(b - count * 0.5) * 0.028, fy + oy - chev * 0.55);\n            vec2 to = (uv - bp) * vec2(1.0, 1.6);\n            float d = birdShape(to, dir, sin(t * 9.0 + hash(vec2(bseed, 3.0)) * 6.283));\n            if (d < 0.0) return vec3(1.0);\n        }\n    }\n    return vec3(0.0);\n}\n\nfloat sdBox(vec2 p, vec2 b){ vec2 q = abs(p)-b; return length(max(q,0.0)) + min(max(q.x,q.y),0.0); }\n// Rain — screen-space foreground streaks, 3 depth layers\nvec3 renderRain(vec2 fragCoord, float t) {\n    if (uRain <= 0.001) return vec3(0.0);\n    vec2 rres = iResolution.xy;\n    vec2 st = fragCoord / rres.y;\n    vec3 acc = vec3(0.0);\n    for (float L = 0.0; L < 3.0; L++) {\n        float cellX = 16.0 + L * 10.0;\n        float cellY = 44.0 + L * 18.0;\n        float tiltX = (0.18*uWind + 0.10 * L) * t;\n        float drift = 0.9 * uWind;\n        float yoff = -t * (0.55 + 0.42 * L) * (0.6 + 0.5 * fract(sin(floor((st.x + tiltX) / 0.02) * 91.7) * 43758.5));\n        vec2 q = vec2(st.x + tiltX, st.y - yoff);\n        vec2 cell = vec2(floor(q.x * rres.y / cellX), floor(q.y * rres.y / cellY));\n        float seed = hash(cell + L * 31.7);\n        if (seed > uRain) continue;\n        vec2 lp = fract(vec2(q.x * rres.y / cellX, q.y * rres.y / cellY)) - 0.5;\n        float len = (0.20 + 0.16 * L) * (0.7 + seed * 0.8);\n        vec2 sp = lp - vec2(drift * lp.y * 0.35, 0.0);\n        sp.x += sp.y * (0.10 + 0.45 * uWind) * (0.6 + 0.4 * fract(sin(floor(q.x / 0.02) * 91.7) * 43758.5));\n        sp.x += sp.y * (0.10 + 0.45 * uWind) * (0.6 + 0.4 * fract(sin(floor(q.x / 0.02) * 91.7) * 43758.5));\n        float dline = abs(sp.x) - 0.0055 * (1.0 + L * 0.7);\n        float dseg = max(dline, abs(sp.y) - len * 0.5);\n        float a = smoothstep(0.005, -0.005, dseg);\n        float distK = 1.0 - 0.35 * L;\n        acc += vec3(0.72, 0.80, 0.95) * a * (0.40 + 0.28 * L) * distK;\n    }\n    return clamp(acc, 0.0, 1.4);\n}\n// Thunder — sky flash + jagged bolt behind clouds (uvGen space)\nfloat _evOff(float n) { return hash(vec2(n, 91.3)); }\nfloat _boltX(float bx, float y, float n) {\n    // 6-segment jagged path: continuous piecewise line\n    float k = floor(y * 6.0);\n    float fx = fract(y * 6.0);\n    float x1 = bx + (hash(vec2(k, n * 3.1)) - 0.5) * 0.13;\n    float x2 = bx + (hash(vec2(k + 1.0, n * 3.1)) - 0.5) * 0.13;\n    return mix(x1, x2, fx);\n}\nvec3 renderThunder(vec2 uv, float t) {\n    if (uThunder <= 0.001) return vec3(0.0);\n    float per = mix(16.0, 5.0, uThunder);\n    float n = floor(t / per);\n    float dt = t - n * per - _evOff(n) * per * 0.7;\n    if (dt < 0.0 || dt > 1.6) return vec3(0.0);\n    vec3 c = vec3(0.0);\n    float bx = mix(0.30, 0.72, hash(vec2(n, 7.7)));\n    float glow = exp(-dt * 6.5) * (0.62 + 0.38 * sin(dt * 62.0));\n    glow = clamp(glow, 0.0, 1.0) * step(0.0, dt);\n    float band = smoothstep(0.30, 0.50, uv.y) * (1.0 - smoothstep(0.85, 1.05, uv.y));\n    // cloud lit as a light source: bright mass centered on the bolt, soft spread\n    float dxg = uv.x - bx;\n    float cloudGlow = exp(-dxg * dxg * 60.0) * exp(-max(uv.y - 0.78, 0.0) * 6.0);\n    c += vec3(0.74, 0.78, 0.98) * glow * band * cloudGlow * (2.2 + 2.2 * uThunder);\n    // main bolt: continuous jagged line, thick top tapering down; first ~0.45s only\n    float boltLife = smoothstep(0.45, 0.05, dt);\n    if (boltLife > 0.001) {\n        float w = 0.0035 + 0.0045 * (0.9 - uv.y);\n        float d = abs(uv.x - _boltX(bx, uv.y, n)) / w;\n        float span = smoothstep(1.02, 0.92, uv.y) * smoothstep(0.30, 0.40, uv.y);\n        float core = (1.0 - smoothstep(0.0, 1.0, d)) * span;\n        // one short branch from mid height\n        float brx = _boltX(bx, 0.60, n);\n        float bd = length(vec2(uv.x - brx - (0.60 - uv.y) * 0.35, (0.60 - uv.y) * 0.5));\n        float branch = (1.0 - smoothstep(0.0, 0.012, bd)) * smoothstep(0.42, 0.46, uv.y) * smoothstep(0.64, 0.58, uv.y);\n        c += vec3(0.96, 0.96, 1.05) * boltLife * (core * (2.4 + 2.0 * uThunder) + branch * 0.7);\n    }\n    return c;\n}\n// Rain splash on train roof / deck — plume + wet sheen\nvec3 renderSplash(vec3 col, vec2 uv, float t) {\n    if (uRain <= 0.001) return col;\n    float deckY = 0.3165;\n    float deckX = 1.0 - step(0.47, uv.x);\n    float colN = floor(uv.x * 80.0);\n    float off = hash(vec2(colN, 3.0));\n    float ph = fract(t * 3.0 + off);\n    float cx = (colN + 0.5 + uWind * 0.35 * (ph - 0.3)) / 80.0;\n    // bounced droplet: rises, drifts with wind, falls\n    float hgt = sin(ph * 3.0) * (0.008 + 0.006 * off);\n    float dy = uv.y - (deckY + hgt);\n    float dx = uv.x - cx;\n    float d = length(vec2(dx * 90.0, dy * 260.0));\n    float drop = 1.0 - smoothstep(0.03, 0.10, d);\n    // base flash at impact point\n    float d2 = length(vec2((uv.x - cx) * 130.0, (uv.y - deckY) * 500.0));\n    float flash = (1.0 - smoothstep(0.0, 0.5, d2)) * (1.0 - ph * 0.9);\n    float glint = (drop + flash) * deckX * step(0.02, sin(ph * 6.283) + 1.3);\n    col += vec3(0.90, 0.95, 1.10) * glint * (1.2 + 2.2 * uRain);\n    // wet sheen band on deck surface\n    float onDeck = smoothstep(0.004, 0.0012, abs(uv.y - deckY)) * deckX;\n    col += vec3(0.32, 0.40, 0.55) * onDeck * uRain * 0.25;\n    return col;\n}\n\nfloat jetShape(vec2 p, float dir) {\n    p.x *= dir;\n    float d = sdBox(p - vec2(0.020, 0.0000), vec2(0.024, 0.0022));\n    d = min(d, sdBox(p - vec2(-0.004, -0.0035), vec2(0.010, 0.0013)));\n    d = min(d, sdBox(p - vec2(-0.024, 0.0028), vec2(0.005, 0.0016)));\n    return d;\n}\nvec3 renderJet(vec2 uv, float t) {\n    float asp = iResolution.x / iResolution.y;\n    float x0 = 0.5*asp*(1.0 - 1.0/uZoom) - 0.10;\n    float x1 = 0.5*asp*(1.0 + 1.0/uZoom) + 0.10;\n    float crossT = 40.0, cycleT = 120.0;\n    float ft = mod(t, cycleT);\n    float speed = (x1 - x0) / crossT;\n    float jx = x0 + speed * min(ft, crossT);\n    float headY = 0.95 + 0.02 * sin(ft / crossT * 6.283);\n    if (uv.x >= jx) return vec3(0.0);\n    float dx = jx - uv.x;\n    float ageT = dx / speed;\n    float ftE = ft - ageT;\n    float ty = 0.95 + 0.02 * sin(ftE / crossT * 6.283);\n    float band = 0.0035 + 0.006*(1.0 - exp(-ageT*0.25)) + 0.00045*ageT;\n    float fade = exp(-ageT*0.045);\n    float trail = exp(-abs(uv.y - ty)/band) * fade * smoothstep(0.0, 0.02, dx);\n    trail *= 1.0 - smoothstep(crossT + 5.0, crossT + 35.0, ft);\n    vec3 col = vec3(trail, trail, 0.0);\n    vec2 to = uv - vec2(jx, headY);\n    float d = jetShape(to, 1.0);\n    float aa = fwidth(d) * 1.5;\n    col.b = smoothstep(aa, -aa, d);\n    return col;\n}\n\nvec3 vignettCorrection( vec3 col, vec2 uv )\n{\n    vec3 col1 = col;\n\n    // correction\n    col1 *= 0.5 + 0.5 * pow( 16.0*uv.x*uv.y*(1.0-uv.x)*(1.0-uv.y), 0.2 );\n\n    // varying lightness\n    col1 *= mix(1.3, 0.5, _nightF);  // 固定亮度：去掉原作者 col1 *= 1.3 + 0.4*cos(0.5*(iTime+3.14)) 的 0.9~1.7 倍脉动\n    return col1;\n}\n\nvec3 scene(vec2 fragCoord, float iTime){\n_nightF = nightAmount();\n_tw = _twilight();\nvec4 fragColor = vec4(0.);\n\n    vec2 uvGen = (fragCoord/iResolution.y - 0.5*iResolution.xy/iResolution.y)/uZoom + 0.5*iResolution.xy/iResolution.y;\n    uvGen.y -= uOffset;\n    vec3 col = genRaster( uvGen );\n    // Moon: arcs across the sky, rises in evening, sets in morning\n    {\n        // moon day-arc: visible when _nightF>0; frac = 0 at moonrise (~18h), 1 at moonset (~6h)\n        float n = _nightF;\n        // moon progress: parametrize the \"visible\" span between dusk and dawn\n        float mp2 = clamp((uTimeOfDay - 0.728) / 0.542, 0.0, 1.0);   // 17:30 → 23:59 wraps... simpler below\n        // wrap: use night sector [0.728, 1.0] + [0, 0.271] as its窗口\n        float tday = uTimeOfDay < 0.5 ? uTimeOfDay + 1.0 : uTimeOfDay;\n        mp2 = clamp((tday - 0.728) / (1.270 - 0.728), 0.0, 1.0);      // 0..1 over the night window\n        mp2 = mix(mp2, 0.62, clamp(n * 0.0, 0.0, 0.0));\n        // arc: x from left 0.06 → right 0.94; y = arch top 0.34 mid\n        float mx2 = mix(0.10, 0.92, mp2);\n        float my2 = 0.86 - sin(mp2 * 3.14159) * 0.42;\n        vec2 sm = (fragCoord / iResolution.xy - vec2(mx2, my2)) * vec2(iResolution.x/iResolution.y, 1.0);\n        float md = length(sm);\n        float moonDisc = 1.0 - smoothstep(0.060, 0.066, md);\n        float maria = fbm(sm*26.0 + 7.0, 4)*0.5;\n        vec3 moonCol = vec3(0.93, 0.94, 0.90)*(1.0 - maria*0.38 + 0.18);\n        // near rise/set the moon dims into horizon haze\n        float visK = clamp(sin(mp2 * 3.14159) * 1.2, 0.0, 1.0);\n        col = mix(col, moonCol, moonDisc * 0.95 * visK);\n        col += vec3(0.72, 0.78, 1.0) * exp(-md*md*12.0) * _nightF * 0.5 * visK;\n    }\n    // Thunder: behind bridge/train, in the cloud layer\n    col = max(col, renderThunder(uvGen, iTime * 0.8));\n\n    float tBird = sin(1.2 * iTime * uSpeed) + 4. * iTime * uSpeed;\n    vec3 bsw = renderBirds(uvGen, tBird);\n    // day birds = dark silhouette; night birds = soft dark\n    col = mix(col, mix(vec3(0.10,0.09,0.12), vec3(0.03,0.04,0.09), _nightF), bsw * 0.94);\n    float jetVis = mix(1.0, 0.22, _nightF);\n    vec3 jet = renderJet(uvGen, iTime * 0.9);\n    // 尾迹=jet>0.02 的白色叠加; 机身=jet.b 独立编码难分 → 分开: renderJet 白线用 r, 机身用 b>0.5\n    vec3 trailCol = nightShift(vec3(0.97, 0.98, 1.00), _nightF);\n    trailCol = mix(trailCol, trailCol * vec3(1.10, 0.90, 0.74), _tw * 0.6);\n    col = mix(col, trailCol, clamp(jet.r, 0.0, 1.0) * 0.85 * jetVis);\n    vec3 bodyCol = mix(vec3(0.86, 0.89, 0.95), vec3(0.10, 0.12, 0.18), _nightF);\n    bodyCol = mix(bodyCol, bodyCol * vec3(1.08, 0.88, 0.72), _tw * 0.5);\n    col = mix(col, bodyCol, jet.b * jetVis);\n    // Rain composited over everything (before vignette)\n    col += renderRain(fragCoord, iTime * 0.9);\n    col = renderSplash(col, uvGen, iTime * 0.9);\n    \n    // Vignett correction\n    vec2 uvVignett = fragCoord/iResolution.xy;\n    col = vignettCorrection( col, uvVignett);\n    return col;\n}\nvoid main(){ sceneOut = vec4(scene(gl_FragCoord.xy, iTime), 1.0); }\n";
+const SHADER_POST = "#version 300 es\nprecision highp float;\nuniform vec2 resolution;\nuniform sampler2D sceneTex;\nuniform float exposure, saturation, hue, temperature, vignette;\nout vec4 color;\nvoid main(){\n  vec2 uv = gl_FragCoord.xy / resolution;\n  vec3 col = texture(sceneTex, uv).rgb;\n  if (hue != 0.) {\n    vec3 axis = normalize(vec3(1.));\n    float a = radians(hue);\n    col = col*cos(a) + cross(axis, col)*sin(a) + axis*dot(axis, col)*(1.-cos(a));\n  }\n  col *= vec3(1. + temperature*.25, 1., 1. - temperature*.25);\n  col = max(col, vec3(0.));\n  col = mix(vec3(dot(col, vec3(.2126,.7152,.0722))), col, saturation) * exposure;\n  col *= mix(1., 0.5 + 0.5*pow(max(16.*uv.x*uv.y*(1.-uv.x)*(1.-uv.y), 0.), .2), vignette);\n  color = vec4(col, 1.);\n}";
+const CONTROLS = [["rain", "\u964d\u96e8\u5f3a\u5ea6", 0, 1, 0.01, 0], ["thunder", "\u6253\u96f7\u5f3a\u5ea6", 0, 1, 0.01, 0], ["wind", "\u98ce\u5411\u5f3a\u5ea6", -2, 2, 0.05, 1], ["speed", "\u884c\u8fdb\u901f\u5ea6", 0, 5, 0.01, 0.26], ["zoom", "\u89c6\u89d2\u7f29\u653e", 0.5, 2, 0.01, 0.71], ["offset", "\u5782\u76f4\u4f4d\u7f6e", -0.5, 0.5, 0.01, -0.12], ["amplitude", "\u4e91\u5c42\u8d77\u4f0f", 0, 2, 0.01, 0.6], ["detail", "\u566a\u58f0\u7ec6\u8282", 1, 8, 1, 8], ["exposure", "\u66dd\u5149\u4eae\u5ea6", 0.2, 2, 0.01, 1], ["saturation", "\u8272\u5f69\u9971\u548c\u5ea6", 0, 2, 0.01, 1], ["hue", "\u6574\u4f53\u8272\u76f8", -180, 180, 1, 0], ["temperature", "\u51b7\u6696\u8272\u6e29", -1, 1, 0.01, 0], ["tod", "\u65f6\u523b", 0, 24, 0.05, 12]];
+const TEX_URL = './blue_noise.png';
+
+const P = {}; for (const c of CONTROLS) P[c[0]] = c[5];
+let paused = false, pageTime = 0, last = 0;
+// URL 参数：?t=<秒> 钉死时间并暂停（确定性截图）；其余 9 个参数可直接覆盖；ui=0 隐藏面板
+{
+  const q = new URLSearchParams(location.search);
+  if (q.has('t')) { pageTime = parseFloat(q.get('t')) || 0; paused = true; }
+  for (const k of ['zoom','offset','speed','amplitude','detail','rain','thunder','wind','exposure','saturation','hue','temperature'])
+    if (q.has(k) && isFinite(parseFloat(q.get(k)))) P[k] = parseFloat(q.get(k));
+  if (q.get('ui') === '0') { const p = document.getElementById('panel'); if (p) p.style.display = 'none'; }
+  var _todOverride = null;
+  if (q.has('tod')) { var _t = parseFloat(q.get('tod')); if (isFinite(_t)) _todOverride = (_t > 1 ? _t / 24 : _t); }
+}
+
+
+// 时刻：todAuto=true 跟系统时钟；false 用手动滑块 P.tod（单位小时）
+var updateTodLabel = function(){};
+var todAuto = true;
+if (_todOverride !== null) { P.tod = _todOverride * 24; todAuto = false; }
+function realHours() {
+  var n = new Date();
+  return n.getHours() + n.getMinutes() / 60 + n.getSeconds() / 3600;
+}
+function getTimeOfDay() { return (todAuto ? realHours() : P.tod) / 24; }
+function updateTod() {
+  if (todAuto && !paused) {
+    P.tod = realHours();
+    if (P['_ui_tod']) P['_ui_tod'].value = P.tod;
+    updateTodLabel();
+  }
+}
+function fmtHours(h) {
+  h = ((h % 24) + 24) % 24;
+  var hh = Math.floor(h), mm = Math.floor((h - hh) * 60);
+  return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+}
+function paintInd() {
+  var el = document.getElementById('timeInd');
+  if (!el) return;
+  var s = timeLabel(getTimeOfDay()) + (todAuto ? ' \u00b7 \u81ea\u52a8' : ' \u00b7 \u624b\u52a8');
+  if (el.textContent !== s) el.textContent = s;
+}
+P.tod = todAuto ? realHours() : P.tod;
+function timeLabel(tod) {
+  var h = Math.floor(tod * 24), m = Math.floor((tod * 24 - h) * 60);
+  var hs = (h < 10 ? '0' : '') + h, ms = (m < 10 ? '0' : '') + m;
+  var period;
+  if (tod < 0.208) period = '🌙 深夜';
+  else if (tod < 0.271) period = '🌄 黎明';
+  else if (tod < 0.333) period = '🌅 日出';
+  else if (tod < 0.458) period = '☀️ 上午';
+  else if (tod < 0.542) period = '☀️ 正午';
+  else if (tod < 0.667) period = '☀️ 下午';
+  else if (tod < 0.729) period = '🌅 日落';
+  else if (tod < 0.792) period = '🌆 黄昏';
+  else period = '🌙 夜晚';
+  return period + ' ' + hs + ':' + ms;
+}
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, preserveDrawingBuffer: true });
+
+function compile(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(s));
+    const m = gl.getShaderInfoLog(s);
+    document.title = 'shader 错误: ' + m.split('\n')[0];
+    throw new Error(m);
+  }
+  return s;
+}
+function program(vs, fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+const sceneProg = program(SHADER_VERT, SHADER_SCENE);
+const postProg = program(SHADER_VERT, SHADER_POST);
+
+const quad = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+
+const sceneTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+const fbo = gl.createFramebuffer();
+
+const noiseTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, noiseTex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+let texReady = false;
+const img = new Image();
+img.onload = () => {
+  gl.bindTexture(gl.TEXTURE_2D, noiseTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+  texReady = true;
+};
+img.src = TEX_URL;
+
+function attrib(prog) {
+  const loc = gl.getAttribLocation(prog, 'pos');
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+}
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+  const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; return true; }
+  return false;
+}
+let sizeChanged = true;
+
+function draw(now) {
+  requestAnimationFrame(draw);
+  if (resize()) sizeChanged = true;
+  if (!last) last = now;
+  const dtRaw = Math.min((now - last) / 1000, 0.3); const dt = Math.min(dtRaw, 0.05); last = now;
+  if (!paused) pageTime += dt;
+  //积雪深度：天气连续积分（下雪慢慢增、下雨慢慢融），不随动画暂停
+  if (window._snowDepth === undefined) window._snowDepth = 0;
+  window._snowDepth = Math.min(1, Math.max(0,
+      window._snowDepth + dtRaw * ((P.rain > 0.005 ? -Math.max(P.rain, 0.35) * 0.025 : -0.003))));
+
+  const w = canvas.width, h = canvas.height;
+
+  if (sizeChanged) {
+    gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, sceneTex, 0);
+    sizeChanged = false;
+  }
+
+  // 场景
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.viewport(0, 0, w, h);
+  gl.useProgram(sceneProg);
+  attrib(sceneProg);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, noiseTex);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+  gl.uniform3f(gl.getUniformLocation(sceneProg, 'iResolution'), w, h, 1);
+  gl.uniform1f(gl.getUniformLocation(sceneProg, 'iTime'), pageTime);
+  gl.uniform1i(gl.getUniformLocation(sceneProg, 'iChannel0'), 0);
+  gl.uniform1i(gl.getUniformLocation(sceneProg, 'iChannel1'), 1);
+  updateTod();
+  gl.uniform1f(gl.getUniformLocation(sceneProg, 'uTimeOfDay'), getTimeOfDay());
+  for (const k of ['zoom', 'offset', 'speed', 'amplitude', 'detail'])
+    gl.uniform1f(gl.getUniformLocation(sceneProg, k === 'amplitude' ? 'uAmplitude' : k === 'detail' ? 'uDetail' : 'u' + k[0].toUpperCase() + k.slice(1)), P[k]);
+  gl.uniform1f(gl.getUniformLocation(sceneProg, 'uRain'), P.rain);
+  gl.uniform1f(gl.getUniformLocation(sceneProg, 'uThunder'), P.thunder);
+  gl.uniform1f(gl.getUniformLocation(sceneProg, 'uSnowDepth'), window._snowDepth || 0);
+  gl.uniform1f(gl.getUniformLocation(sceneProg, 'uWind'), P.wind);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  // 后处理
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, w, h);
+  gl.useProgram(postProg);
+  attrib(postProg);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+  gl.uniform2f(gl.getUniformLocation(postProg, 'resolution'), w, h);
+  gl.uniform1i(gl.getUniformLocation(postProg, 'sceneTex'), 0);
+  for (const k of ['exposure', 'saturation', 'hue', 'temperature'])
+    gl.uniform1f(gl.getUniformLocation(postProg, k), P[k]);
+  gl.uniform1f(gl.getUniformLocation(postProg, 'vignette'), 1);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  window.__ready = texReady;
+  // Update time indicator
+  paintInd();
+}
+
+// ---- 参数面板 ----
+const rows = document.getElementById('rows');
+for (const [key, label, min, max, step, def] of CONTROLS) {
+  const d = document.createElement('div'); d.className = 'row';
+  d.innerHTML = '<label><span>' + label + '</span><span id="v_' + key + '"></span></label>' +
+    '<input type="range" id="s_' + key + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + P[key] + '">';
+  rows.appendChild(d);
+  const inp = d.querySelector('input');
+  const val = d.querySelector('span:last-child');
+  const show = () => {
+    val.textContent = key === 'tod' ? fmtHours(+P[key]) + (todAuto ? ' \u81ea\u52a8' : '')
+      : (+P[key]).toFixed(key === 'hue' || key === 'detail' ? 0 : 2);
+  };
+  show();
+  inp.addEventListener('input', () => { P[key] = +inp.value; if (key === 'tod') { todAuto = false; paintInd(); } show(); });
+  P['_ui_' + key] = inp;
+  if (key === 'tod') updateTodLabel = show;
+}
+document.getElementById('close').onclick = () => { document.getElementById('panel').style.display = 'none'; document.getElementById('toggle').style.display = 'block'; };
+document.getElementById('toggle').onclick = () => { document.getElementById('panel').style.display = 'block'; document.getElementById('toggle').style.display = 'none'; };
+document.getElementById('reset').onclick = () => {
+  todAuto = true;
+  for (const [key, , , , , def] of CONTROLS) { P[key] = def; P['_ui_' + key].value = def; }
+  document.querySelectorAll('#rows label span:last-child').forEach((el, i) => {
+    const k = CONTROLS[i][0];
+    el.textContent = k === 'tod' ? fmtHours(CONTROLS[i][5]) : CONTROLS[i][5].toFixed(k === 'hue' || k === 'detail' ? 0 : 2);
+  });
+  updateTod(); updateTodLabel(); paintInd();
+};
+document.getElementById('clock').onclick = () => { todAuto = true; updateTod(); updateTodLabel(); paintInd(); };
+document.getElementById('pause').onclick = (e) => { paused = !paused; e.target.textContent = paused ? '继续' : '暂停'; };
+
+// 供无头截图/外部控制使用
+window.__setParams = (o) => { if ('tod' in o) { todAuto = false; if (o.tod <= 1) o = Object.assign({}, o, { tod: o.tod * 24 }); } Object.assign(P, o); for (const k in o) if (P['_ui_' + k]) P['_ui_' + k].value = o[k]; updateTodLabel(); };
+window.__setTime = (t) => { pageTime = t; paused = true; };
+window.__params = P;
+
+requestAnimationFrame(draw);
+
+// ---- 壁纸宿主下发参数（CloudTrainWallpaper.exe 注入）----
+window.__applyWallpaperSettings = function (o) {
+  if (!o) return;
+  if (typeof o.todAuto === 'boolean') todAuto = o.todAuto;
+  for (var k in o) {
+    if (k === 'autoStart' || k === 'todAuto' || k === 'tod') continue;
+    if (k.charAt(0) === '_' || !(k in P)) continue;
+    var v = +o[k];
+    if (isFinite(v)) P[k] = v;
+  }
+  if (!todAuto && isFinite(+o.tod) && +o.tod >= 0 && +o.tod <= 24) P.tod = +o.tod;
+  for (var k2 in P) {
+    if (k2.charAt(0) === '_') continue;
+    var inp = P['_ui_' + k2];
+    if (inp && Math.abs(inp.value - P[k2]) > 1e-9) inp.value = P[k2];
+    var span = document.getElementById('v_' + k2);
+    if (span) span.textContent = k2 === 'tod' ? fmtHours(+P[k2]) + (todAuto ? ' \u81ea\u52a8' : '')
+      : (+P[k2]).toFixed(k2 === 'hue' || k2 === 'detail' ? 0 : 2);
+  }
+  if (typeof updateTodLabel === 'function') { try { updateTodLabel(); } catch (e) {} }
+  if (typeof paintInd === 'function') { try { paintInd(); } catch (e) {} }
+};
+</script>
+</body>
+</html>
