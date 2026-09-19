@@ -39,5 +39,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: CloudTrainWallpaper-Setup
-          path: installer/CloudTrainWallpaper-Setup.exe
+          path: CloudTrainWallpaper-Setup.exe
           if-no-files-found: error
