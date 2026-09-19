@@ -26,19 +26,14 @@ jobs:
           Copy-Item wallpaper/index.html publish/CloudTrainWallpaper/wallpaper/
           Copy-Item wallpaper/blue_noise.png publish/CloudTrainWallpaper/wallpaper/
 
-      - name: Download NSIS
+      - name: Install NSIS
         shell: pwsh
-        run: |
-          $url = "https://prdownloads.sourceforge.net/nsis/NSIS%203.10.1.zip"
-          Invoke-WebRequest -Uri $url -OutFile nsis.zip -MaximumRedirection 5
-          Expand-Archive nsis.zip -DestinationPath C:\nsis
-          Get-ChildItem C:\nsis -Recurse -Filter makensis.exe | Select-Object -First 1 FullName
+        run: choco install nsis -y --no-progress
 
       - name: Build installer
         shell: pwsh
         run: |
-          $mk = (Get-ChildItem C:\nsis -Recurse -Filter makensis.exe | Select-Object -First 1).FullName
-          & $mk /V3 installer/installer.nsi
+          & "C:\Program Files (x86)\NSIS\makensis.exe" /V3 installer/installer.nsi
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
