@@ -33,6 +33,9 @@
   #toggle { position: fixed; right: 18px; top: 18px; display: none; z-index: 10;
     padding: 6px 10px; color: #fff; background: rgba(18,20,26,.62); border: 1px solid rgba(255,255,255,.14);
     border-radius: 8px; cursor: pointer; }
+  /* 壁纸模式：纯画面，参数面板、按钮、时刻、署名全部隐藏 */
+  body.wall #panel, body.wall #toggle, body.wall #timeInd, body.wall #sig { display: none !important; }
+  body.wall.idle, body.wall.idle #gl { cursor: none; }
 </style>
 </head>
 <body>
@@ -48,6 +51,9 @@
     <button id="clock">跟随时钟</button>
     <button id="pause">暂停</button>
   </div>
+  <div class="btns">
+    <button id="wall">壁纸模式</button>
+  </div>
 </div>
 <script>
 const SHADER_VERT = "#version 300 es\nin vec2 pos;\nvoid main(){ gl_Position = vec4(pos, 0., 1.); }";
@@ -59,7 +65,7 @@ const SPLASH_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAICAYAAA
 
 const P = {}; for (const c of CONTROLS) P[c[0]] = c[5];
 let paused = false, pageTime = 0, last = 0;
-// URL 参数：?t=<秒> 钉死时间并暂停（确定性截图）；其余 9 个参数可直接覆盖；ui=0 隐藏面板
+// URL 参数：?t=<秒> 钉死时间并暂停（确定性截图）；其余 9 个参数可直接覆盖；ui=0 隐藏面板；wall=1 壁纸模式
 {
   const q = new URLSearchParams(location.search);
   if (q.has('t')) { pageTime = parseFloat(q.get('t')) || 0; paused = true; }
@@ -303,10 +309,34 @@ document.getElementById('reset').onclick = () => {
 document.getElementById('clock').onclick = () => { todAuto = true; updateTod(); updateTodLabel(); paintInd(); };
 document.getElementById('pause').onclick = (e) => { paused = !paused; e.target.textContent = paused ? '继续' : '暂停'; };
 
+// 壁纸模式：隐藏面板 / 参数按钮 / 左下时刻，只留画面与右下角署名
+// 退出：Esc 或双击；进入后鼠标静止 2 秒自动隐藏光标
+let wallMode = false, _idleT = 0;
+function setWall(on) {
+  wallMode = !!on;
+  document.body.classList.toggle('wall', wallMode);
+  document.body.classList.remove('idle');
+  clearTimeout(_idleT);
+  if (wallMode) _idleT = setTimeout(() => document.body.classList.add('idle'), 2000);
+}
+document.getElementById('wall').onclick = () => setWall(true);
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && wallMode) setWall(false); });
+addEventListener('dblclick', () => { if (wallMode) setWall(false); });
+addEventListener('mousemove', () => {
+  if (!wallMode) return;
+  document.body.classList.remove('idle');
+  clearTimeout(_idleT);
+  _idleT = setTimeout(() => document.body.classList.add('idle'), 2000);
+});
+window.__setWall = setWall;
+
 // 供无头截图/外部控制使用
 window.__setParams = (o) => { if ('tod' in o) { todAuto = false; if (o.tod <= 1) o = Object.assign({}, o, { tod: o.tod * 24 }); } Object.assign(P, o); for (const k in o) if (P['_ui_' + k]) P['_ui_' + k].value = o[k]; updateTodLabel(); };
 window.__setTime = (t) => { pageTime = t; paused = true; };
 window.__params = P;
+
+// ?wall=1 直接以壁纸模式开场（壁纸程序 / 截图用）
+if (new URLSearchParams(location.search).get('wall') === '1') setWall(true);
 
 requestAnimationFrame(draw);
 </script>
